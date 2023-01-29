@@ -39,6 +39,8 @@
 #include "target_specific.h"
 #include <memory>
 #include <utility>
+#include <driver/pcnt.h>
+#include <soc/pcnt_struct.h>
 
 #ifdef ARCH_ESP32
 #if !MESHTASTIC_EXCLUDE_WEBSERVER
@@ -118,6 +120,23 @@ float tcxoVoltage = SX126X_DIO3_TCXO_VOLTAGE; // if TCXO is optional, put this h
 #endif
 
 using namespace concurrency;
+
+// PCNT code adapted from:
+// https://esp32.com/viewtopic.php?t=14660#p76327
+// select ESP32 pulse counter unit 0 (out of 0 to 7 indipendent counting units)
+// https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/peripherals/pcnt.html
+// https://docs.espressif.com/projects/esp-idf/en/v4.3/esp32/api-reference/peripherals/pcnt.html
+#define PCNT_FREQ_UNIT PCNT_UNIT_0
+
+int PCNT_INPUT_PIN = 36; // Input 36 = SENSOR_VP = GPIO36 (I hope)
+bool _flag = 0;          // only for testing
+
+int16_t PulseCounter = 0;       // pulse counter, max. value is 65536
+int OverflowCounter = 0;        // pulse counter overflow counter
+int PCNT_H_LIM_VAL = 10000;     // upper limit of counting  max. 32767, write +1 to overflow counter, when reached
+uint16_t PCNT_FILTER_VAL = 100; // filter (damping, inertia) value for avoiding glitches in the count, max. 1023
+
+pcnt_isr_handle_t user_isr_handle = NULL; // interrupt handler - not used
 
 // We always create a screen object, but we only init it if we find the hardware
 graphics::Screen *screen = nullptr;
@@ -209,9 +228,75 @@ static int32_t ledBlinker()
     return powerStatus->getIsCharging() ? 1000 : (ledOn ? 1 : 1000);
 }
 
+void IRAM_ATTR CounterOverflow(void *arg)
+{                                           // Interrupt for overflow of pulse counter
+    OverflowCounter = OverflowCounter + 1;  // increase overflow counter
+    PCNT.int_clr.val = BIT(PCNT_FREQ_UNIT); // clean overflow flag
+    pcnt_counter_clear(PCNT_FREQ_UNIT);     // zero and reset of pulse counter unit
+}
+
+void initPulseCounter()
+{                                                   // initialise pulse counter
+    pcnt_config_t pcntFreqConfig = {};              // Instance of pulse counter
+    pcntFreqConfig.pulse_gpio_num = PCNT_INPUT_PIN; // pin assignment for pulse counter = GPIO 15
+    pcntFreqConfig.neg_mode = PCNT_COUNT_INC;       // count falling edges (=change from low to high logical level) as pulses
+    pcntFreqConfig.pos_mode = PCNT_COUNT_DIS;       // ignore rising edges
+    pcntFreqConfig.counter_h_lim = PCNT_H_LIM_VAL;  // set upper limit of counting
+    pcntFreqConfig.unit = PCNT_FREQ_UNIT;           // select ESP32 pulse counter unit 0
+    pcntFreqConfig.channel = PCNT_CHANNEL_0;        // select channel 0 of pulse counter unit 0
+    pcnt_unit_config(&pcntFreqConfig);              // configur rigisters of the pulse counter
+
+    pcnt_counter_pause(PCNT_FREQ_UNIT); // pause puls counter unit
+    pcnt_counter_clear(PCNT_FREQ_UNIT); // zero and reset of pulse counter unit
+
+    pcnt_event_enable(PCNT_FREQ_UNIT, PCNT_EVT_H_LIM); // enable event for interrupt on reaching upper limit of counting
+    pcnt_isr_register(CounterOverflow, NULL, 0, &user_isr_handle); // configure register overflow interrupt handler
+    pcnt_intr_enable(PCNT_FREQ_UNIT);                              // enable overflow interrupt
+
+    pcnt_set_filter_value(PCNT_FREQ_UNIT, PCNT_FILTER_VAL); // set damping, inertia
+    pcnt_filter_enable(PCNT_FREQ_UNIT);                     // enable counter glitch filter (damping)
+
+    pcnt_counter_resume(PCNT_FREQ_UNIT); // resume counting on pulse counter unit
+}
+
+void Read_Reset_PCNT()
+{                                                          // function for reading pulse counter (for timer)
+    pcnt_get_counter_value(PCNT_FREQ_UNIT, &PulseCounter); // get pulse counter value - maximum value is 16 bits
+
+    // resetting counter as if example, delet for application in PiedPiperS
+    OverflowCounter = 0;                // set overflow counter to zero
+    pcnt_counter_clear(PCNT_FREQ_UNIT); // zero and reset of pulse counter unit
+    // conterOK = true;                                         // not in use, copy from example code
+    // ########################################
+}
+
+void Read_PCNT()
+{                                                          // function for reading pulse counter (for timer)
+    pcnt_get_counter_value(PCNT_FREQ_UNIT, &PulseCounter); // get pulse counter value - maximum value is 16 bits
+}
+
+static uint32_t getPcnt()
+{
+    // read from PCNT
+    Read_Reset_PCNT();
+    return PulseCounter;
+}
+
+static int32_t pulseCounterUpdate()
+{
+    // TODO make global?
+    static int16_t pcnt;
+
+    pcnt = getPcnt();
+    LOG_INFO("Counts within last 10s: %d\n", pcnt);
+
+    return 10000; // 10s period
+}
+
 uint32_t timeLastPowered = 0;
 
 static Periodic *ledPeriodic;
+static Periodic *pcntPeriodic;
 static OSThread *powerFSMthread;
 static OSThread *ambientLightingThread;
 
@@ -339,9 +424,13 @@ void setup()
 #endif
 #endif
 
+    initPulseCounter();
+    pinMode(PCNT_INPUT_PIN, INPUT);
+
     OSThread::setup();
 
     ledPeriodic = new Periodic("Blink", ledBlinker);
+    pcntPeriodic = new Periodic("PCNT", pulseCounterUpdate);
 
     fsInit();
 

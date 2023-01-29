@@ -99,6 +99,7 @@ std::vector<MeshModule *> moduleFrames;
 
 // Stores the last 4 of our hardware ID, to make finding the device for pairing easier
 static char ourId[5];
+static char cpm[5];
 
 // vector where symbols (string) are displayed in bottom corner of display.
 std::vector<std::string> functionSymbals;
@@ -1751,6 +1752,9 @@ void Screen::setup()
     handleSetOn(false); // force clean init
 #endif
 
+    // create a string from the current CPM
+    snprintf(cpm, sizeof(cpm), "%*u", sizeof(cpm), 555);
+
     // Turn on the display.
     handleSetOn(true);
 
@@ -2512,6 +2516,7 @@ void DebugInfo::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16
     }
 
     display->drawString(x + SCREEN_WIDTH - display->getStringWidth(ourId), y + FONT_HEIGHT_SMALL, ourId);
+    display->drawString(x + SCREEN_WIDTH - display->getStringWidth(ourId), y + (FONT_HEIGHT_SMALL * 2), cpm);
 
     // Draw any log messages
     display->drawLogBuffer(x, y + (FONT_HEIGHT_SMALL * 2));

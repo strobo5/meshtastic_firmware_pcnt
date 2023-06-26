@@ -286,9 +286,13 @@ static int32_t pulseCounterUpdate()
 {
     // TODO make global?
     static int16_t pcnt;
+    static char buf[32];
 
     pcnt = getPcnt();
     LOG_INFO("Counts within last 10s: %d\n", pcnt);
+
+    snprintf(buf, sizeof(buf), "10s cnt: %d\n", pcnt);
+    screen->print(buf);
 
     return 10000; // 10s period
 }

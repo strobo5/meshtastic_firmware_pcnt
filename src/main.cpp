@@ -128,8 +128,8 @@ using namespace concurrency;
 // https://docs.espressif.com/projects/esp-idf/en/v4.3/esp32/api-reference/peripherals/pcnt.html
 #define PCNT_FREQ_UNIT PCNT_UNIT_0
 
-int PCNT_INPUT_PIN = 36; // Input 36 = SENSOR_VP = GPIO36 (I hope)
-bool _flag = 0;          // only for testing
+int PCNT_INPUT_PIN = 0; // Input 36 = SENSOR_VP = GPIO36 (I hope)
+bool _flag = 0;         // only for testing
 
 int16_t PulseCounter = 0;       // pulse counter, max. value is 65536
 int OverflowCounter = 0;        // pulse counter overflow counter
